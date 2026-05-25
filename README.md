@@ -1,31 +1,21 @@
-# Mariss3D ESP32-CAM Gözetleme Kulesi (SD Kapalı)
+# Mariss3D Gözetleme Kulesi — Endüstriyel Sürüm (PIR Çıkarıldı)
 
-Bu sürüm **stabilite + görsellik + sesli etkileşim** odaklı, non-blocking mimariyle hazırlandı.
+Bu sürümde PIR sensörü akıştan çıkarıldı ve sistem çekirdeği pan/tilt + akış + OTA + ağ dayanıklılığına odaklandı.
 
-## Öne Çıkanlar
-- 🎥 Akıcı async MJPEG canlı yayın (`/stream`)
-- 🎛️ Pan/Tilt kontrol (GPIO14/15) non-blocking adımlı servo sürüş
-- 🔊 Buzzer etkileşimi (GPIO13):
-  - açılış melodisi
-  - Wi-Fi bekleme bip’i
-  - panelden “Korna Çal” + “Sesi Durdur”
-- 🩺 Sağlık endpoint’i (`/health`) ve panelde canlı durum rozeti
-- 💡 SD kart bilinçli kapalı (GPIO13/14/15 çakışması önlendi)
+## Özellikler
+- Async MJPEG canlı yayın (`/stream`)
+- Non-blocking pan/tilt kontrol + tarama modu
+- Buzzer/siren kontrolü (`/buzzer`, `/buzzer/stop`)
+- Preset kaydetme/çağırma
+- Flash parlaklık + gece modu
+- Wi-Fi STA + başarısız olursa SoftAP fallback
+- OTA güncelleme (`/update`)
+- Durum endpoint'i (`/status`)
 
-## Mimari Notlar
-- `/move` endpoint’i sadece hedef açıları günceller.
-- Servo hareketi `loop()` içinde `updateServosNonBlocking()` ile akar.
-- Buzzer da `delay` kullanmadan `updateMelodyNonBlocking()` ile yürütülür.
-- Bu sayede yayın devam ederken kontrol ve ses komutları anında cevap verir.
-
-## Gerekli Kütüphaneler
-- `esp32` board package
-- `ESP32Servo`
-- `ESPAsyncWebServer`
-- `AsyncTCP`
+## PIR durumu
+- PIR pin/algılama mantığı tamamen kaldırıldı.
+- UI/JSON artık PIR alanı döndürmez.
 
 ## Kurulum
-1. `WIFI_SSID` ve `WIFI_PASS` alanlarını doldur.
-2. Kart tipini AI Thinker ESP32-CAM seç.
-3. Sketch'i yükle.
-4. Seri portta görünen IP adresini tarayıcıda aç.
+- Gerekli kütüphaneler: `ESPAsyncWebServer`, `AsyncTCP`, `ESP32Servo`, `Preferences`, `Update`
+- AI Thinker ESP32-CAM hedefiyle derleyin.
