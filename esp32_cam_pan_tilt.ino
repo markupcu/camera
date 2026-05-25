@@ -56,10 +56,14 @@ uint32_t lastServoStepMs = 0;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
+void buzzerOff() {
+  ledcWrite(BUZZER_LEDC_CHANNEL, 0);
+}
+
 void tonePlay(int freq, int ms) {
   ledcWriteTone(BUZZER_LEDC_CHANNEL, freq);
   delay(ms);
-  ledcWriteTone(BUZZER_LEDC_CHANNEL, 0);
+  buzzerOff();
   delay(30);
 }
 
@@ -98,6 +102,44 @@ void updateServosNonBlocking() {
   servoPan.write(panCurrent);
   servoTilt.write(tiltCurrent);
 }
+
+
+class AsyncJpegStreamResponse : public AsyncAbstractResponse {
+ public:
+  AsyncJpegStreamResponse() {
+    _code = 200;
+    _contentType = "multipart/x-mixed-replace; boundary=frame";
+    _sendContentLength = false;
+    _chunked = true;
+  }
+
+  bool _sourceValid() const override { return true; }
+
+  size_t _fillBuffer(uint8_t *buf, size_t maxLen) override {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      delay(2);
+      return 0;
+    }
+
+    String head = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + String(fb->len) + "\r\n\r\n";
+    const size_t hlen = head.length();
+    const size_t total = hlen + fb->len + 2;
+
+    if (total > maxLen) {
+      esp_camera_fb_return(fb);
+      return RESPONSE_TRY_AGAIN;
+    }
+
+    memcpy(buf, head.c_str(), hlen);
+    memcpy(buf + hlen, fb->buf, fb->len);
+    buf[hlen + fb->len] = '\r';
+    buf[hlen + fb->len + 1] = '\n';
+
+    esp_camera_fb_return(fb);
+    return total;
+  }
+};
 
 void registerRoutes() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -150,30 +192,7 @@ async function buzz(){await fetch('/buzzer')}
   });
 
   server.on("/stream", HTTP_GET, [](AsyncWebServerRequest *request){
-    AsyncWebServerResponse *response = request->beginChunkedResponse(
-      "multipart/x-mixed-replace; boundary=frame",
-      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-        (void)index;
-        camera_fb_t *fb = esp_camera_fb_get();
-        if (!fb) return 0;
-
-        String head = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + String(fb->len) + "\r\n\r\n";
-        size_t hlen = head.length();
-        size_t total = hlen + fb->len + 2;
-        if (maxLen < total) {
-          esp_camera_fb_return(fb);
-          return 0;
-        }
-
-        memcpy(buffer, head.c_str(), hlen);
-        memcpy(buffer + hlen, fb->buf, fb->len);
-        buffer[hlen + fb->len] = '\r';
-        buffer[hlen + fb->len + 1] = '\n';
-
-        esp_camera_fb_return(fb);
-        return total;
-      }
-    );
+    AsyncWebServerResponse *response = new AsyncJpegStreamResponse();
     response->addHeader("Access-Control-Allow-Origin", "*");
     request->send(response);
   });
@@ -237,6 +256,7 @@ void setup() {
 
   registerRoutes();
   server.begin();
+  buzzerOff();
 }
 
 void loop() {
