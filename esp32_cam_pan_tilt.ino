@@ -2,18 +2,20 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESP32Servo.h>
-#include <SD_MMC.h>
-#include <FS.h>
-#include <time.h>
 
 // ===================== KULLANICI AYARLARI =====================
 const char* WIFI_SSID = "WIFI_ADI";
 const char* WIFI_PASS = "WIFI_SIFRE";
 
-// Servo pinleri
+// Servo / buzzer pinleri
 constexpr int PIN_PAN = 14;
 constexpr int PIN_TILT = 15;
 constexpr int PIN_BUZZER = 13;
+
+// Kamera LEDC kaynaklarıyla çakışmaması için ayrı buzzer kanalı
+constexpr int BUZZER_LEDC_CHANNEL = 4;
+constexpr int BUZZER_LEDC_TIMER_BITS = 8;
+constexpr int BUZZER_BASE_FREQ = 2000;
 
 // Servo sınırları (mekanik limitlerine göre düzenle)
 constexpr int PAN_MIN = 20;
@@ -26,9 +28,6 @@ constexpr int SERVO_STEP_MS = 20;       // küçük ms = daha hızlı/sert
 constexpr int SERVO_STEP_DEG = 1;       // küçük derece = daha yumuşak
 constexpr int SERVO_HOLD_MS = 100;      // komutlar arası küçük bekleme
 
-// SD kayıt ayarları
-constexpr unsigned long FRAME_SAVE_INTERVAL_MS = 900; // ~1 fps
-
 WebServer server(80);
 Servo servoPan;
 Servo servoTilt;
@@ -37,9 +36,6 @@ volatile int panCurrent = 90;
 volatile int tiltCurrent = 90;
 volatile int panTarget = 90;
 volatile int tiltTarget = 90;
-
-unsigned long lastFrameSave = 0;
-bool sdReady = false;
 
 // ========== AI Thinker ESP32-CAM pin map ==========
 #define PWDN_GPIO_NUM     32
@@ -59,16 +55,6 @@ bool sdReady = false;
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
-
-String nowFileStamp() {
-  struct tm t;
-  if (!getLocalTime(&t)) {
-    return "no_time";
-  }
-  char buf[32];
-  strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &t);
-  return String(buf);
-}
 
 void smoothMove(Servo &s, int &current, int target) {
   target = constrain(target, 0, 180);
@@ -95,10 +81,15 @@ void moveToTargets() {
 }
 
 void tonePlay(int freq, int ms) {
-  ledcWriteTone(0, freq);
+  ledcWriteTone(BUZZER_LEDC_CHANNEL, freq);
   delay(ms);
-  ledcWriteTone(0, 0);
+  ledcWriteTone(BUZZER_LEDC_CHANNEL, 0);
   delay(30);
+}
+
+void wifiWaitingBeep() {
+  tonePlay(440, 40);
+  delay(140);
 }
 
 void startupMelody() {
@@ -139,7 +130,7 @@ input[type=range]{width:100%}
 <label>Pan: <span id='panv'>90</span></label><input id='pan' type='range' min='20' max='160' value='90'/>
 <label>Tilt: <span id='tiltv'>90</span></label><input id='tilt' type='range' min='30' max='140' value='90'/>
 <div class='row'><button class='btn' onclick='savePos()'>Konuma Git</button><button class='btn' onclick='buzz()'>Buzzer Çal</button></div>
-<p class='small'>Not: Servo hareketleri küçük adımlarla yapılıyor, düşük adaptörlerde akım pikini azaltır.</p>
+<p class='small'>SD kaydı bilinçli olarak kapatıldı; GPIO13/14/15 pan-tilt+buzzer için ayrıldı.</p>
 </div></div>
 <script>
 const pan=document.getElementById('pan'), tilt=document.getElementById('tilt');
@@ -180,16 +171,6 @@ void handleStream() {
     client.write(fb->buf, fb->len);
     server.sendContent("\r\n");
 
-    if (sdReady && millis() - lastFrameSave > FRAME_SAVE_INTERVAL_MS) {
-      String fn = "/" + nowFileStamp() + ".jpg";
-      File f = SD_MMC.open(fn, FILE_WRITE);
-      if (f) {
-        f.write(fb->buf, fb->len);
-        f.close();
-      }
-      lastFrameSave = millis();
-    }
-
     esp_camera_fb_return(fb);
     delay(15);
   }
@@ -227,8 +208,8 @@ bool initCamera() {
 void setup() {
   Serial.begin(115200);
 
-  ledcSetup(0, 2000, 8);
-  ledcAttachPin(PIN_BUZZER, 0);
+  ledcSetup(BUZZER_LEDC_CHANNEL, BUZZER_BASE_FREQ, BUZZER_LEDC_TIMER_BITS);
+  ledcAttachPin(PIN_BUZZER, BUZZER_LEDC_CHANNEL);
 
   servoPan.setPeriodHertz(50);
   servoTilt.setPeriodHertz(50);
@@ -241,16 +222,11 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(400);
     Serial.print(".");
+    wifiWaitingBeep();
   }
   Serial.println();
   Serial.println(WiFi.localIP());
-
-  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-
-  sdReady = SD_MMC.begin();
-  if (sdReady) Serial.println("SD kart hazir");
 
   if (!initCamera()) {
     Serial.println("Kamera baslatilamadi");
