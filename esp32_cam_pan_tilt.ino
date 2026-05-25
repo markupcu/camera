@@ -241,6 +241,7 @@ label{display:block;margin:8px 0 4px;color:var(--sub)} input[type=range]{width:1
 </div><p style='color:var(--sub)'>Sistem non-blocking çalışır: yayın açıkken kontrol devam eder.</p></div></div></div>
 <script>
 const pan=document.getElementById('pan'),tilt=document.getElementById('tilt'),st=document.getElementById('st');
+const panv=document.getElementById('panv'),tiltv=document.getElementById('tiltv');
 pan.oninput=()=>panv.innerText=pan.value; tilt.oninput=()=>tiltv.innerText=tilt.value;
 async function savePos(){await fetch(`/move?pan=${pan.value}&tilt=${tilt.value}`)}
 async function center(){pan.value=90;tilt.value=90;panv.innerText=90;tiltv.innerText=90;await savePos()}
