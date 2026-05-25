@@ -48,6 +48,7 @@ size_t melodyLen = 0;
 size_t melodyIdx = 0;
 uint32_t melodyNextMs = 0;
 bool melodyLoop = false;
+bool buzzerAttached = false;
 
 // ========== AI Thinker ESP32-CAM pin map ==========
 #define PWDN_GPIO_NUM     32
@@ -67,7 +68,22 @@ bool melodyLoop = false;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-void buzzerOff() { ledcWrite(PIN_BUZZER, 0); }
+void ensureBuzzerAttached() {
+  if (!buzzerAttached) {
+    ledcAttach(PIN_BUZZER, BUZZER_BASE_FREQ, BUZZER_LEDC_TIMER_BITS);
+    buzzerAttached = true;
+  }
+}
+
+void buzzerOff() {
+  if (buzzerAttached) {
+    ledcWriteTone(PIN_BUZZER, 0);
+    ledcDetach(PIN_BUZZER);
+    buzzerAttached = false;
+  }
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+}
 
 void startMelody(const Note* notes, size_t len, bool loopPlayback = false) {
   activeMelody = notes;
@@ -91,8 +107,12 @@ void updateMelodyNonBlocking() {
   if (now < melodyNextMs) return;
 
   const Note n = activeMelody[melodyIdx];
-  if (n.freq <= 0) buzzerOff();
-  else ledcWriteTone(PIN_BUZZER, n.freq);
+  if (n.freq <= 0) {
+    buzzerOff();
+  } else {
+    ensureBuzzerAttached();
+    ledcWriteTone(PIN_BUZZER, n.freq);
+  }
 
   melodyNextMs = now + n.ms;
   melodyIdx++;
@@ -270,15 +290,16 @@ bool initCamera() {
   config.pin_sccb_sda = SIOD_GPIO_NUM; config.pin_sccb_scl = SIOC_GPIO_NUM; config.pin_pwdn = PWDN_GPIO_NUM; config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA;
-  config.jpeg_quality = 16;
-  config.fb_count = 2;
+  config.frame_size = FRAMESIZE_QQVGA;
+  config.jpeg_quality = 20;
+  config.fb_count = 1;
   return esp_camera_init(&config) == ESP_OK;
 }
 
 void setup() {
   Serial.begin(115200);
-  ledcAttach(PIN_BUZZER, BUZZER_BASE_FREQ, BUZZER_LEDC_TIMER_BITS);
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
 
   servoPan.setPeriodHertz(50); servoTilt.setPeriodHertz(50);
   servoPan.attach(PIN_PAN, 500, 2400); servoTilt.attach(PIN_TILT, 500, 2400);
