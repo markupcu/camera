@@ -208,6 +208,7 @@ class AsyncJpegStreamResponse : public AsyncAbstractResponse {
     _fb = nullptr;
     _index = 0;
     _hdrLen = 0;
+    delay(1);
     return RESPONSE_TRY_AGAIN;
   }
 };
@@ -291,9 +292,11 @@ bool initCamera() {
   config.pin_sccb_sda = SIOD_GPIO_NUM; config.pin_sccb_scl = SIOC_GPIO_NUM; config.pin_pwdn = PWDN_GPIO_NUM; config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QQVGA;
-  config.jpeg_quality = 20;
-  config.fb_count = 1;
+  config.frame_size = FRAMESIZE_QVGA;
+  config.jpeg_quality = 14;
+  config.fb_count = 2;
+  config.grab_mode = CAMERA_GRAB_LATEST;
+  config.fb_location = CAMERA_FB_IN_PSRAM;
   return esp_camera_init(&config) == ESP_OK;
 }
 
@@ -316,6 +319,7 @@ void setup() {
     Serial.print('.');
   }
   stopMelody();
+  WiFi.setSleep(false);
 
   if (!initCamera()) {
     Serial.println("Kamera baslatilamadi");
