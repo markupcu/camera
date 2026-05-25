@@ -37,10 +37,10 @@ AsyncWebServer server(80);
 Servo servoPan;
 Servo servoTilt;
 
-volatile int panCurrent = 90;
-volatile int tiltCurrent = 90;
-volatile int panTarget = 90;
-volatile int tiltTarget = 90;
+int panCurrent = 90;
+int tiltCurrent = 90;
+int panTarget = 90;
+int tiltTarget = 90;
 uint32_t lastServoStepMs = 0;
 
 const Note* activeMelody = nullptr;
@@ -67,7 +67,7 @@ bool melodyLoop = false;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-void buzzerOff() { ledcWrite(BUZZER_LEDC_CHANNEL, 0); }
+void buzzerOff() { ledcWrite(PIN_BUZZER, 0); }
 
 void startMelody(const Note* notes, size_t len, bool loopPlayback = false) {
   activeMelody = notes;
@@ -92,7 +92,7 @@ void updateMelodyNonBlocking() {
 
   const Note n = activeMelody[melodyIdx];
   if (n.freq <= 0) buzzerOff();
-  else ledcWriteTone(BUZZER_LEDC_CHANNEL, n.freq);
+  else ledcWriteTone(PIN_BUZZER, n.freq);
 
   melodyNextMs = now + n.ms;
   melodyIdx++;
@@ -278,8 +278,7 @@ bool initCamera() {
 
 void setup() {
   Serial.begin(115200);
-  ledcSetup(BUZZER_LEDC_CHANNEL, BUZZER_BASE_FREQ, BUZZER_LEDC_TIMER_BITS);
-  ledcAttachPin(PIN_BUZZER, BUZZER_LEDC_CHANNEL);
+  ledcAttach(PIN_BUZZER, BUZZER_BASE_FREQ, BUZZER_LEDC_TIMER_BITS);
 
   servoPan.setPeriodHertz(50); servoTilt.setPeriodHertz(50);
   servoPan.attach(PIN_PAN, 500, 2400); servoTilt.attach(PIN_TILT, 500, 2400);
