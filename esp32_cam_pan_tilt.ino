@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <WebServer.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
 #include <ESP32Servo.h>
 
 // ===================== KULLANICI AYARLARI =====================
@@ -17,18 +18,17 @@ constexpr int BUZZER_LEDC_CHANNEL = 4;
 constexpr int BUZZER_LEDC_TIMER_BITS = 8;
 constexpr int BUZZER_BASE_FREQ = 2000;
 
-// Servo sınırları (mekanik limitlerine göre düzenle)
+// Servo sınırları
 constexpr int PAN_MIN = 20;
 constexpr int PAN_MAX = 160;
 constexpr int TILT_MIN = 30;
 constexpr int TILT_MAX = 140;
 
-// Yumuşak hareket ayarları
-constexpr int SERVO_STEP_MS = 20;       // küçük ms = daha hızlı/sert
-constexpr int SERVO_STEP_DEG = 1;       // küçük derece = daha yumuşak
-constexpr int SERVO_HOLD_MS = 100;      // komutlar arası küçük bekleme
+// Non-blocking yumuşak hareket ayarları
+constexpr uint32_t SERVO_STEP_INTERVAL_MS = 20;
+constexpr int SERVO_STEP_DEG = 1;
 
-WebServer server(80);
+AsyncWebServer server(80);
 Servo servoPan;
 Servo servoTilt;
 
@@ -36,6 +36,7 @@ volatile int panCurrent = 90;
 volatile int tiltCurrent = 90;
 volatile int panTarget = 90;
 volatile int tiltTarget = 90;
+uint32_t lastServoStepMs = 0;
 
 // ========== AI Thinker ESP32-CAM pin map ==========
 #define PWDN_GPIO_NUM     32
@@ -43,7 +44,6 @@ volatile int tiltTarget = 90;
 #define XCLK_GPIO_NUM      0
 #define SIOD_GPIO_NUM     26
 #define SIOC_GPIO_NUM     27
-
 #define Y9_GPIO_NUM       35
 #define Y8_GPIO_NUM       34
 #define Y7_GPIO_NUM       39
@@ -55,30 +55,6 @@ volatile int tiltTarget = 90;
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
-
-void smoothMove(Servo &s, int &current, int target) {
-  target = constrain(target, 0, 180);
-  if (target == current) return;
-
-  int dir = (target > current) ? 1 : -1;
-  while (current != target) {
-    current += dir * SERVO_STEP_DEG;
-    if ((dir > 0 && current > target) || (dir < 0 && current < target)) {
-      current = target;
-    }
-    s.write(current);
-    delay(SERVO_STEP_MS);
-  }
-}
-
-void moveToTargets() {
-  panTarget = constrain(panTarget, PAN_MIN, PAN_MAX);
-  tiltTarget = constrain(tiltTarget, TILT_MIN, TILT_MAX);
-
-  smoothMove(servoPan, panCurrent, panTarget);
-  delay(SERVO_HOLD_MS);
-  smoothMove(servoTilt, tiltCurrent, tiltTarget);
-}
 
 void tonePlay(int freq, int ms) {
   ledcWriteTone(BUZZER_LEDC_CHANNEL, freq);
@@ -93,10 +69,10 @@ void wifiWaitingBeep() {
 }
 
 void startupMelody() {
-  tonePlay(523, 120); // C5
-  tonePlay(659, 120); // E5
-  tonePlay(784, 150); // G5
-  tonePlay(1046, 220); // C6
+  tonePlay(523, 120);
+  tonePlay(659, 120);
+  tonePlay(784, 150);
+  tonePlay(1046, 220);
 }
 
 void alertMelody() {
@@ -105,8 +81,27 @@ void alertMelody() {
   tonePlay(784, 180);
 }
 
-void handleRoot() {
-  String html = R"rawliteral(
+void updateServosNonBlocking() {
+  const uint32_t now = millis();
+  if (now - lastServoStepMs < SERVO_STEP_INTERVAL_MS) return;
+  lastServoStepMs = now;
+
+  panTarget = constrain(panTarget, PAN_MIN, PAN_MAX);
+  tiltTarget = constrain(tiltTarget, TILT_MIN, TILT_MAX);
+
+  if (panCurrent < panTarget) panCurrent = min(panCurrent + SERVO_STEP_DEG, panTarget);
+  else if (panCurrent > panTarget) panCurrent = max(panCurrent - SERVO_STEP_DEG, panTarget);
+
+  if (tiltCurrent < tiltTarget) tiltCurrent = min(tiltCurrent + SERVO_STEP_DEG, tiltTarget);
+  else if (tiltCurrent > tiltTarget) tiltCurrent = max(tiltCurrent - SERVO_STEP_DEG, tiltTarget);
+
+  servoPan.write(panCurrent);
+  servoTilt.write(tiltCurrent);
+}
+
+void registerRoutes() {
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    String html = R"rawliteral(
 <!doctype html><html lang='tr'><head><meta charset='utf-8'/>
 <meta name='viewport' content='width=device-width,initial-scale=1'/>
 <title>ESP32-CAM Pan/Tilt Kontrol</title>
@@ -126,11 +121,11 @@ input[type=range]{width:100%}
 <body><div class='wrap'>
 <div class='card'><h1>Canlı Yayın</h1><img src='/stream'/></div>
 <div class='card'>
-<h1>Pan / Tilt (Yumuşak Hareket)</h1>
+<h1>Pan / Tilt (Akıcı Non-Blocking)</h1>
 <label>Pan: <span id='panv'>90</span></label><input id='pan' type='range' min='20' max='160' value='90'/>
 <label>Tilt: <span id='tiltv'>90</span></label><input id='tilt' type='range' min='30' max='140' value='90'/>
 <div class='row'><button class='btn' onclick='savePos()'>Konuma Git</button><button class='btn' onclick='buzz()'>Buzzer Çal</button></div>
-<p class='small'>SD kaydı bilinçli olarak kapatıldı; GPIO13/14/15 pan-tilt+buzzer için ayrıldı.</p>
+<p class='small'>Servo hedefleri hemen set edilir; hareket loop içinde adım adım, kilitlemeden yapılır.</p>
 </div></div>
 <script>
 const pan=document.getElementById('pan'), tilt=document.getElementById('tilt');
@@ -140,40 +135,48 @@ async function savePos(){await fetch(`/move?pan=${pan.value}&tilt=${tilt.value}`
 async function buzz(){await fetch('/buzzer')}
 </script></body></html>
 )rawliteral";
-  server.send(200, "text/html", html);
-}
+    request->send(200, "text/html", html);
+  });
 
-void handleMove() {
-  if (server.hasArg("pan")) panTarget = server.arg("pan").toInt();
-  if (server.hasArg("tilt")) tiltTarget = server.arg("tilt").toInt();
-  moveToTargets();
-  server.send(200, "text/plain", "OK");
-}
+  server.on("/move", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (request->hasParam("pan")) panTarget = request->getParam("pan")->value().toInt();
+    if (request->hasParam("tilt")) tiltTarget = request->getParam("tilt")->value().toInt();
+    request->send(200, "text/plain", "OK");
+  });
 
-void handleBuzzer() {
-  alertMelody();
-  server.send(200, "text/plain", "BUZZ");
-}
+  server.on("/buzzer", HTTP_GET, [](AsyncWebServerRequest *request){
+    alertMelody();
+    request->send(200, "text/plain", "BUZZ");
+  });
 
-void handleStream() {
-  WiFiClient client = server.client();
-  String response = "HTTP/1.1 200 OK\r\n";
-  response += "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n";
-  server.sendContent(response);
+  server.on("/stream", HTTP_GET, [](AsyncWebServerRequest *request){
+    AsyncWebServerResponse *response = request->beginChunkedResponse(
+      "multipart/x-mixed-replace; boundary=frame",
+      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+        (void)index;
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) return 0;
 
-  while (client.connected()) {
-    camera_fb_t * fb = esp_camera_fb_get();
-    if (!fb) continue;
+        String head = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + String(fb->len) + "\r\n\r\n";
+        size_t hlen = head.length();
+        size_t total = hlen + fb->len + 2;
+        if (maxLen < total) {
+          esp_camera_fb_return(fb);
+          return 0;
+        }
 
-    server.sendContent("--frame\r\n");
-    server.sendContent("Content-Type: image/jpeg\r\n");
-    server.sendContent("Content-Length: " + String(fb->len) + "\r\n\r\n");
-    client.write(fb->buf, fb->len);
-    server.sendContent("\r\n");
+        memcpy(buffer, head.c_str(), hlen);
+        memcpy(buffer + hlen, fb->buf, fb->len);
+        buffer[hlen + fb->len] = '\r';
+        buffer[hlen + fb->len + 1] = '\n';
 
-    esp_camera_fb_return(fb);
-    delay(15);
-  }
+        esp_camera_fb_return(fb);
+        return total;
+      }
+    );
+    response->addHeader("Access-Control-Allow-Origin", "*");
+    request->send(response);
+  });
 }
 
 bool initCamera() {
@@ -198,10 +201,9 @@ bool initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_VGA;
-  config.jpeg_quality = 14;
+  config.frame_size = FRAMESIZE_QVGA;
+  config.jpeg_quality = 16;
   config.fb_count = 2;
-
   return esp_camera_init(&config) == ESP_OK;
 }
 
@@ -233,13 +235,10 @@ void setup() {
     while (true) delay(1000);
   }
 
-  server.on("/", handleRoot);
-  server.on("/move", handleMove);
-  server.on("/buzzer", handleBuzzer);
-  server.on("/stream", HTTP_GET, handleStream);
+  registerRoutes();
   server.begin();
 }
 
 void loop() {
-  server.handleClient();
+  updateServosNonBlocking();
 }
